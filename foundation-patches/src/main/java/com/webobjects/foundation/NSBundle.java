@@ -55,7 +55,9 @@ public class NSBundle {
 		try {
 			final String searchPath = "Resources/Info.plist";
 			final Enumeration<URL> e1 = NSBundle.class.getClassLoader().getResources(searchPath);
-			final Enumeration<URL> e2 = ClassLoader.getSystemResources(searchPath);
+			// final Enumeration<URL> e2 = ClassLoader.getSystemResources(searchPath);
+			final String moduleSearchPath = "META-INF/webobjects/Resources/Info.plist";
+			final Enumeration<URL> e2 = NSBundle.class.getClassLoader().getResources(moduleSearchPath);
 			final Stream<URL> stream = Stream.concat(Collections.list(e1).stream(), Collections.list(e2).stream());
 			stream.map(_NSPathUtils::pathFromJarFileUrl).distinct().forEach(NSBundle::loadBundleWithPath);
 
