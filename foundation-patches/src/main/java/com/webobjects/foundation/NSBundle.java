@@ -39,6 +39,7 @@ public class NSBundle {
 	public static final String MANIFESTIMPLEMENTATIONVERSIONKEY = NSBundleInfo.MANIFEST_IMPLEMENTATION_VERSION_KEY;
 	public static final String NS_GLOBAL_PROPERTIES_PATH = "NSGlobalPropertiesPath";
 	private static final String LEGACY_GLOBAL_PROPERTIES_PATH = "WebObjectsPropertiesReplacement";
+	private static final String JIGSAW_SEARCH_PATH = "META-INF/webobjects/Resources/Info.plist";
 
 	public static final String AllBundlesDidLoadNotification = "NSBundleAllDidLoadNotification";
 	public static final String BundleDidLoadNotification = "NSBundleDidLoadNotification";
@@ -56,10 +57,13 @@ public class NSBundle {
 			final String searchPath = "Resources/Info.plist";
 			final Enumeration<URL> e1 = NSBundle.class.getClassLoader().getResources(searchPath);
 			// final Enumeration<URL> e2 = ClassLoader.getSystemResources(searchPath);
-			final String moduleSearchPath = "META-INF/webobjects/Resources/Info.plist";
-			final Enumeration<URL> e2 = NSBundle.class.getClassLoader().getResources(moduleSearchPath);
+			final Enumeration<URL> e2 = NSBundle.class.getClassLoader().getResources(JIGSAW_SEARCH_PATH);
 			final Stream<URL> stream = Stream.concat(Collections.list(e1).stream(), Collections.list(e2).stream());
-			stream.map(_NSPathUtils::pathFromJarFileUrl).distinct().forEach(NSBundle::loadBundleWithPath);
+			stream.map(url -> "jar".equals(url.getProtocol())
+					? _NSPathUtils.pathFromJarFileUrl(url)
+					: url.toString())
+					.distinct()
+					.forEach(NSBundle::loadBundleWithPath);
 
 			// read bundles from classpath
 			final String classPath = System.getProperty("java.class.path");
@@ -155,23 +159,27 @@ public class NSBundle {
 	}
 
 	private static FileSystem fileSystemForBundlePath(final String bundlePath) {
-		if (!bundlePath.endsWith(".jar")) {
+		if (!bundlePath.startsWith("jrt:") && !bundlePath.endsWith(".jar")) {
 			return FileSystems.getDefault();
 		}
 		final URI uri = uriForBundlePath(bundlePath);
 		try {
-			return "jar".equals(uri.getScheme()) ? jarFileSystemForUri(uri)
+			return "jar".equals(uri.getScheme()) || "jrt".equals(uri.getScheme())
+					? fileSystemForUri(uri)
 					: FileSystems.getDefault();
 		} catch (final IOException e) {
 			throw NSForwardException._runtimeExceptionForThrowable(e);
 		}
 	}
 
-	private static FileSystem jarFileSystemForUri(final URI uri) throws IOException {
+	private static FileSystem fileSystemForUri(final URI uri) throws IOException {
+		final URI fsUri = "jrt".equals(uri.getScheme())
+				? URI.create("jrt:/")
+				: uri;
 		try {
-			return FileSystems.getFileSystem(uri);
+			return FileSystems.getFileSystem(fsUri);
 		} catch (final FileSystemNotFoundException e) {
-			return FileSystems.newFileSystem(uri, Collections.emptyMap());
+			return FileSystems.newFileSystem(fsUri, Collections.emptyMap());
 		}
 	}
 
@@ -222,7 +230,9 @@ public class NSBundle {
 	}
 
 	private static NSBundle loadBundleWithPath(final String bundlePath) {
+		//NSLog.out.appendln("bundlePath: " + bundlePath);
 		final FileSystem bundleFs = fileSystemForBundlePath(bundlePath);
+		//NSLog.out.appendln("bundleFs: " + bundleFs);
 		final ServiceLoader<NSBundleAdaptorProvider> loader = ServiceLoader.load(NSBundleAdaptorProvider.class);
 		final NSBundle bundle = StreamSupport.stream(loader.spliterator(), false)
 				.filter(adaptor -> adaptor.isAdaptable(bundleFs, bundlePath)).findFirst()
@@ -276,9 +286,12 @@ public class NSBundle {
 				uri = new URI("jar", file.toURI().toString() + "!/", null);
 			} else if (file.exists() && file.isDirectory() && file.canExecute()) {
 				uri = file.toURI();
+			} else if (bundlePath.startsWith("jrt:")) {
+				uri = new URI(bundlePath);
 			} else {
 				throw new IllegalArgumentException("Not a valid path for bundle file system " + bundlePath);
 			}
+			//NSLog.out.appendln("uriForBundlePath: " + uri);
 			return uri;
 		} catch (final URISyntaxException e) {
 			throw NSForwardException._runtimeExceptionForThrowable(e);
@@ -286,8 +299,26 @@ public class NSBundle {
 	}
 
 	private static URL urlForBundlePath(final String bundlePath) {
+		/*
+		 * This is gross, but apparently using a jrt:/ with FileSystem expects
+		 * jrt:/modules/<modulename> whereas opening a jrt:/ with url.openStream expects
+		 * jrt:/<modulename>.
+		 */
+		final URI uri = uriForBundlePath(bundlePath);
+		URI uriForBundlePathURL;
+		if ("jrt".equals(uri.getScheme())) {
+			final String path = uri.getPath();
+			try {
+				// Remove leading /modules
+				uriForBundlePathURL = new URI("jrt:" + path.substring(8));
+			} catch (final URISyntaxException e) {
+				throw NSForwardException._runtimeExceptionForThrowable(e);
+			}
+		} else {
+			uriForBundlePathURL = uri;
+		}
 		try {
-			return uriForBundlePath(bundlePath).toURL();
+			return uriForBundlePathURL.toURL();
 		} catch (final MalformedURLException e) {
 			throw NSForwardException._runtimeExceptionForThrowable(e);
 		}
@@ -332,8 +363,7 @@ public class NSBundle {
 
 	public String _bundleURLPrefix() {
 		if (bundleUrlPrefix == null) {
-			final URL url = urlForBundlePath(bundlePath());
-			bundleUrlPrefix = url.toString();
+			bundleUrlPrefix = bundlePathURL().toString();
 		}
 		return bundleUrlPrefix;
 	}
@@ -401,11 +431,7 @@ public class NSBundle {
 
 	public URL bundlePathURL() {
 		if (bundlePathURL == null) {
-			try {
-				bundlePathURL = new File(bundlePath()).toURI().toURL();
-			} catch (final MalformedURLException e) {
-				throw NSForwardException._runtimeExceptionForThrowable(e);
-			}
+			bundlePathURL = urlForBundlePath(bundlePath);
 		}
 		return bundlePathURL;
 	}
@@ -432,6 +458,7 @@ public class NSBundle {
 	public InputStream inputStreamForResourcePath(final String aResourcePath) {
 		final URL url = pathURLForResourcePath(aResourcePath);
 		if (url != null) {
+			//NSLog.out.appendln("Opening url: " + url);
 			try {
 				return url.openStream();
 			} catch (final IOException e) {

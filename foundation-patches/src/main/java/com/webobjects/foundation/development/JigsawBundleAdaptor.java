@@ -18,16 +18,22 @@ import com.webobjects.foundation.NSNestedProperties;
 import com.webobjects.foundation.NSPropertyListSerialization;
 
 public class JigsawBundleAdaptor implements NSBundleAdaptorProvider {
+	private static final String JIGSAW_SEARCH_PATH = "META-INF/webobjects/Resources/Info.plist";
 
 	@Override
 	public String adaptorBundlePath(final FileSystem fs, final String bundlePath) {
-		return bundlePath;
+		return bundlePath.startsWith("jrt:")
+				? "jrt:/modules" + bundlePath.substring(4, bundlePath.length() - JIGSAW_SEARCH_PATH.length())
+				: bundlePath;
 	}
 
 	@Override
 	public NSBundleInfo bundleInfoFromFileSystem(final FileSystem fs, final Path fsBundlePath) {
 		try {
-			final Path infoPath = fsBundlePath.resolve("META-INF/webobjects/Resources/Info.plist");
+			// NSLog.out.appendln("Files in path: " + "/");
+			// Files.walk(fs.getPath("/")).forEach(NSLog.out::appendln);
+
+			final Path infoPath = fsBundlePath.resolve(JIGSAW_SEARCH_PATH);
 			final String infoString = Files.readAllLines(infoPath).stream()
 					.collect(StringBuilder::new, StringBuilder::append, StringBuilder::append).toString();
 			final NSDictionary dict = NSPropertyListSerialization.dictionaryForString(infoString);
@@ -61,13 +67,26 @@ public class JigsawBundleAdaptor implements NSBundleAdaptorProvider {
 
 	@Override
 	public Path fsBundlePath(final FileSystem fs, final String bundlePath) {
-		return fs.getPath("/");
+		return bundlePath.startsWith("jrt:")
+				? fs.getPath(bundlePath.substring(4))
+				: fs.getPath("/");
 	}
 
 	@Override
 	public boolean isAdaptable(final FileSystem fs, final String bundlePath) {
-		final Path infoPath = fs.getPath("/META-INF/webobjects/Resources/Info.plist");
-		return Files.exists(infoPath) && Files.isReadable(infoPath);
+		final boolean result;
+		/*
+		 * A Jigsaw bundle may be a modular jar on the module path, or it may be part of
+		 * a jlinked application using a jrt:/ uri. We can support both with a single
+		 * adaptor.
+		 */
+		if (bundlePath.startsWith("jrt:") && bundlePath.endsWith(JIGSAW_SEARCH_PATH)) {
+			result = true;
+		} else {
+			final Path infoPath = fs.getPath(JIGSAW_SEARCH_PATH);
+			result = Files.exists(infoPath) && Files.isReadable(infoPath);
+		}
+		return result;
 	}
 
 	@Override
