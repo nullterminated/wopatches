@@ -3229,7 +3229,8 @@ public class WOApplication
 
 	public boolean _isForeignSupportedDevelopmentPlatform() {
 		final String osName = System.getProperty("os.name");
-		return osName != null && ("Windows 2000".equals(osName) || "Windows NT".equals(osName));
+		return osName != null
+				&& ("Windows 2000".equals(osName) || "Windows NT".equals(osName) || "Linux".equals(osName));
 	}
 
 	private static void _initWOApp(final boolean logDefaults) {

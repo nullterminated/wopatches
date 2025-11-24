@@ -1,11 +1,8 @@
 package com.webobjects._ideservices;
 
-import java.awt.Desktop;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.net.URI;
-import java.net.URISyntaxException;
 
 import com.webobjects.appserver.WOApplication;
 import com.webobjects.foundation.NSBundle;
@@ -19,11 +16,9 @@ import com.webobjects.foundation._NSUtilities;
 /**
  * This class overrides the one found in the JavaWebObjects.framework.
  * _openInitialURL is called in the run() method of WOApplication. We add
- * support for Linux via the Java Desktop class here.
+ * support for Linux here.
  */
 public class _WOLaunchServices {
-	private static final String openExecutable = "/usr/bin/open";
-
 	private static WOApplication woapp = null;
 
 	@Deprecated
@@ -105,15 +100,15 @@ public class _WOLaunchServices {
 		if (anURLString != null) {
 			final String osName = System.getProperty("os.name");
 			final boolean handleAutoOpenInBrowser = application().autoOpenClientApplication()
-					? (!_openClientApplication(anURLString, osName))
+					? !_openClientApplication(anURLString, osName)
 					: true;
 			boolean isWebServicesAssistantDisabled = false;
 			if (NSProperties.getProperty("WSAssistantEnabled") != null) {
 				isWebServicesAssistantDisabled = !NSPropertyListSerialization
 						.booleanForString(NSProperties.getProperty("WSAssistantEnabled"));
 			}
-			final boolean isWebServicesAssistantAwareApp = (_NSUtilities
-					.classWithName("com.webobjects.webservices.generation._WSDirectAction") != null);
+			final boolean isWebServicesAssistantAwareApp = _NSUtilities
+					.classWithName("com.webobjects.webservices.generation._WSDirectAction") != null;
 			if (handleAutoOpenInBrowser && !isWebServicesAssistantDisabled && isWebServicesAssistantAwareApp) {
 				try {
 					_openWebServicesAssistantUrl(anURLString);
@@ -126,7 +121,7 @@ public class _WOLaunchServices {
 					throw NSForwardException._runtimeExceptionForThrowable(e);
 				}
 			} else if (handleAutoOpenInBrowser && application().autoOpenInBrowser()) {
-				if (application()._isSupportedDevelopmentPlatform() || Desktop.isDesktopSupported()) {
+				if (application()._isSupportedDevelopmentPlatform()) {
 					anDebugString = "Opening application's URL in browser:\n" + anURLString;
 					_openURL(anURLString, osName);
 				} else {
@@ -149,23 +144,19 @@ public class _WOLaunchServices {
 	}
 
 	private void _openURL(final String anURLString, final String osName) {
-		final File openURLFile = new File(openExecutable);
-		if (openURLFile.exists() && openURLFile.isFile() && !openURLFile.canWrite()) {
-			try {
-				Runtime.getRuntime().exec("/usr/bin/open " + anURLString);
-			} catch (final IOException e) {
-				throw NSForwardException._runtimeExceptionForThrowable(e);
-			}
-		} else if (Desktop.isDesktopSupported()) {
-			try {
-				final Desktop desktop = Desktop.getDesktop();
-				final URI uri = new URI(anURLString);
-				desktop.browse(uri);
-			} catch (URISyntaxException | IOException | RuntimeException e) {
-				_debugString("Error opening autolaunch url: " + anURLString + " error message: " + e.getMessage());
-			}
+		final String lowercaseOsName = osName.toLowerCase();
+		final String cmd;
+		if (lowercaseOsName.contains("mac") || lowercaseOsName.contains("darwin")) {
+			cmd = "open";
+		} else if (lowercaseOsName.contains("win")) {
+			cmd = "start";
 		} else {
-			_debugString("Unable to locate /usr/bin/open on your computer, AutoOpen launch will not work");
+			cmd = "xdg-open";
+		}
+		try {
+			new ProcessBuilder(cmd, anURLString).start();
+		} catch (final IOException e) {
+			throw NSForwardException._runtimeExceptionForThrowable(e);
 		}
 	}
 }
