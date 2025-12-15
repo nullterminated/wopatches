@@ -67,9 +67,7 @@ public class JigsawBundleAdaptor implements NSBundleAdaptorProvider {
 
 	@Override
 	public Path fsBundlePath(final FileSystem fs, final String bundlePath) {
-		return bundlePath.startsWith("jrt:")
-				? fs.getPath(bundlePath.substring(4))
-				: fs.getPath("/");
+		return bundlePath.startsWith("jrt:") ? fs.getPath(bundlePath.substring(4)) : fs.getPath("/");
 	}
 
 	@Override
@@ -80,11 +78,15 @@ public class JigsawBundleAdaptor implements NSBundleAdaptorProvider {
 		 * a jlinked application using a jrt:/ uri. We can support both with a single
 		 * adaptor.
 		 */
-		if (bundlePath.startsWith("jrt:") && bundlePath.endsWith(JIGSAW_SEARCH_PATH)) {
+		final boolean isJavaRuntimeImage = bundlePath.startsWith("jrt:");
+		final boolean isMavenProject = bundlePath.contains("target/classes");
+		if (isJavaRuntimeImage && bundlePath.endsWith(JIGSAW_SEARCH_PATH)) {
 			result = true;
-		} else {
+		} else if (!isMavenProject) {
 			final Path infoPath = fs.getPath(JIGSAW_SEARCH_PATH);
 			result = Files.exists(infoPath) && Files.isReadable(infoPath);
+		} else {
+			result = false;
 		}
 		return result;
 	}

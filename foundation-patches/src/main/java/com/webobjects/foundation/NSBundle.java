@@ -12,7 +12,6 @@ import java.nio.file.FileSystemNotFoundException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
@@ -39,6 +38,7 @@ public class NSBundle {
 	public static final String MANIFESTIMPLEMENTATIONVERSIONKEY = NSBundleInfo.MANIFEST_IMPLEMENTATION_VERSION_KEY;
 	public static final String NS_GLOBAL_PROPERTIES_PATH = "NSGlobalPropertiesPath";
 	private static final String LEGACY_GLOBAL_PROPERTIES_PATH = "WebObjectsPropertiesReplacement";
+	private static final String LEGACY_SEARCH_PATH = "Resources/Info.plist";
 	private static final String JIGSAW_SEARCH_PATH = "META-INF/webobjects/Resources/Info.plist";
 
 	public static final String AllBundlesDidLoadNotification = "NSBundleAllDidLoadNotification";
@@ -54,26 +54,20 @@ public class NSBundle {
 	static {
 		// read NSBundles from jars
 		try {
-			final String searchPath = "Resources/Info.plist";
-			final Enumeration<URL> e1 = NSBundle.class.getClassLoader().getResources(searchPath);
-			// final Enumeration<URL> e2 = ClassLoader.getSystemResources(searchPath);
+			final Enumeration<URL> e1 = NSBundle.class.getClassLoader().getResources(LEGACY_SEARCH_PATH);
 			final Enumeration<URL> e2 = NSBundle.class.getClassLoader().getResources(JIGSAW_SEARCH_PATH);
 			final Stream<URL> stream = Stream.concat(Collections.list(e1).stream(), Collections.list(e2).stream());
-			stream.map(url -> "jar".equals(url.getProtocol())
-					? _NSPathUtils.pathFromJarFileUrl(url)
-					: url.toString())
-					.distinct()
-					.forEach(NSBundle::loadBundleWithPath);
+			stream.distinct().forEach(NSBundle::loadBundleWithUrl);
 
-			// read bundles from classpath
-			final String classPath = System.getProperty("java.class.path");
-			final List<String> paths = Arrays.asList(classPath.split(File.pathSeparator));
-			Optional.ofNullable(NSProperties.getProperty("com.webobjects.classpath"))
-					.map(wcp -> Arrays.asList(wcp.split(File.pathSeparator))).ifPresent(wcp -> paths.addAll(wcp));
-			// skip any jar bundles which are already loaded and check everything else
-			final List<String> remainingPaths = paths.stream().filter(p -> !BUNDLES_BY_PATH.containsKey(p)).distinct()
-					.collect(Collectors.toList());
-			remainingPaths.forEach(NSBundle::loadBundleWithPath);
+//			// read bundles from classpath
+//			final String classPath = System.getProperty("java.class.path");
+//			final List<String> paths = Arrays.asList(classPath.split(File.pathSeparator));
+//			Optional.ofNullable(NSProperties.getProperty("com.webobjects.classpath"))
+//					.map(wcp -> Arrays.asList(wcp.split(File.pathSeparator))).ifPresent(wcp -> paths.addAll(wcp));
+//			// skip any jar bundles which are already loaded and check everything else
+//			final List<String> remainingPaths = paths.stream().filter(p -> !BUNDLES_BY_PATH.containsKey(p)).distinct()
+//					.collect(Collectors.toList());
+//			remainingPaths.forEach(NSBundle::loadBundleWithPath);
 
 			loadBundleProperties();
 			NSNotificationCenter.defaultCenter().postNotification(AllBundlesDidLoadNotification, null, null);
@@ -164,8 +158,7 @@ public class NSBundle {
 		}
 		final URI uri = uriForBundlePath(bundlePath);
 		try {
-			return "jar".equals(uri.getScheme()) || "jrt".equals(uri.getScheme())
-					? fileSystemForUri(uri)
+			return "jar".equals(uri.getScheme()) || "jrt".equals(uri.getScheme()) ? fileSystemForUri(uri)
 					: FileSystems.getDefault();
 		} catch (final IOException e) {
 			throw NSForwardException._runtimeExceptionForThrowable(e);
@@ -173,9 +166,7 @@ public class NSBundle {
 	}
 
 	private static FileSystem fileSystemForUri(final URI uri) throws IOException {
-		final URI fsUri = "jrt".equals(uri.getScheme())
-				? URI.create("jrt:/")
-				: uri;
+		final URI fsUri = "jrt".equals(uri.getScheme()) ? URI.create("jrt:/") : uri;
 		try {
 			return FileSystems.getFileSystem(fsUri);
 		} catch (final FileSystemNotFoundException e) {
@@ -230,9 +221,9 @@ public class NSBundle {
 	}
 
 	private static NSBundle loadBundleWithPath(final String bundlePath) {
-		//NSLog.out.appendln("bundlePath: " + bundlePath);
+		// NSLog.out.appendln("bundlePath: " + bundlePath);
 		final FileSystem bundleFs = fileSystemForBundlePath(bundlePath);
-		//NSLog.out.appendln("bundleFs: " + bundleFs);
+		// NSLog.out.appendln("bundleFs: " + bundleFs);
 		final ServiceLoader<NSBundleAdaptorProvider> loader = ServiceLoader.load(NSBundleAdaptorProvider.class);
 		final NSBundle bundle = StreamSupport.stream(loader.spliterator(), false)
 				.filter(adaptor -> adaptor.isAdaptable(bundleFs, bundlePath)).findFirst()
@@ -264,6 +255,25 @@ public class NSBundle {
 		return bundle;
 	}
 
+	private static NSBundle loadBundleWithUrl(final URL url) {
+		NSLog.out.appendln("loadBundleWithUrl: " + url);
+		final String bundlePath;
+		switch (url.getProtocol()) {
+		case "jar":
+			bundlePath = _NSPathUtils.pathFromJarFileUrl(url);
+			break;
+		case "jrt":
+			bundlePath = url.toString();
+			break;
+		case "file":
+			bundlePath = url.getPath();
+			break;
+		default:
+			throw new IllegalArgumentException("Unexpected URL protocol: " + url);
+		}
+		return loadBundleWithPath(bundlePath);
+	}
+
 	public static NSBundle mainBundle() {
 		if (mainBundle == null) {
 			final String mainBundleName = NSProperties._mainBundleName();
@@ -291,7 +301,7 @@ public class NSBundle {
 			} else {
 				throw new IllegalArgumentException("Not a valid path for bundle file system " + bundlePath);
 			}
-			//NSLog.out.appendln("uriForBundlePath: " + uri);
+			// NSLog.out.appendln("uriForBundlePath: " + uri);
 			return uri;
 		} catch (final URISyntaxException e) {
 			throw NSForwardException._runtimeExceptionForThrowable(e);
@@ -458,7 +468,7 @@ public class NSBundle {
 	public InputStream inputStreamForResourcePath(final String aResourcePath) {
 		final URL url = pathURLForResourcePath(aResourcePath);
 		if (url != null) {
-			//NSLog.out.appendln("Opening url: " + url);
+			// NSLog.out.appendln("Opening url: " + url);
 			try {
 				return url.openStream();
 			} catch (final IOException e) {
